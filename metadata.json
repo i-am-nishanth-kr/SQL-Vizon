@@ -1,0 +1,9 @@
+{
+  "name": "SQL Vizon",
+  "description": "AI-powered SQL lineage and visualization tool with versioned diagrams and catalog management.",
+  "author":"Nishanth",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

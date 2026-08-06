@@ -56,9 +56,31 @@ export interface LineageEdge {
   [key: string]: any;
 }
 
+export interface ColumnSource {
+  table: string;
+  column: string;
+}
+
+export interface ColumnTransformation {
+  targetTable: string;
+  targetColumn: string;
+  transformationType?: 'concatenation' | 'aggregation' | 'calculation' | 'case_conditional' | 'cast' | 'window_function' | 'direct' | 'custom' | string;
+  expression?: string;
+  description?: string;
+  sourceColumns: ColumnSource[];
+}
+
+export interface ColumnDependency {
+  targetTable: string;
+  targetColumn: string;
+  sourceColumns: ColumnSource[];
+}
+
 export interface LineageConfig {
   nodes: LineageNode[];
   edges: LineageEdge[];
+  columnDependencies?: ColumnDependency[];
+  transformations?: ColumnTransformation[];
 }
 
 export interface HoveredItem {

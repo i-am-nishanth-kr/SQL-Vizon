@@ -250,26 +250,54 @@ All backend API routes are registered in `server.ts`.
 
 ---
 
-## 4. AI Lineage Analysis Engine
+## 4. AI Lineage Analysis Engine (Vercel AI SDK)
 
-The lineage engine leverages the Google Gen AI SDK (`@google/genai`) in `server.ts`:
+The lineage engine uses the **Vercel AI SDK** (`ai`, `@ai-sdk/google`, `@ai-sdk/openai`) in `server.ts` to allow seamless switching between AI models and providers:
 
 ```typescript
-import { GoogleGenAI } from '@google/genai';
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+import { generateText } from 'ai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
 ```
 
+### Flexible Multi-Provider Architecture (`getLanguageModel`):
+Supported providers via `.env` environment variables:
+1. **Google Gemini (Default)**:
+   - `AI_PROVIDER="google"`
+   - `AI_MODEL="gemini-2.5-flash"` (or `gemini-2.5-pro`)
+   - `GEMINI_API_KEY="..."`
+2. **OpenAI**:
+   - `AI_PROVIDER="openai"`
+   - `AI_MODEL="gpt-4o-mini"` (or `gpt-4o`)
+   - `OPENAI_API_KEY="..."`
+3. **Local LLMs / Ollama / Unsloth Studio**:
+   - `AI_PROVIDER="ollama"` | `"unsloth"` | `"local"`
+   - `AI_MODEL="llama3"` (or `mistral`, `qwen2.5-coder`, etc.)
+   - `LOCAL_AI_BASE_URL="http://127.0.0.1:11434/v1"` (or `http://localhost:8000/v1` for Unsloth/vLLM)
+   - `LOCAL_AI_API_KEY="ollama"`
+
 ### Parsing Workflow:
-1. **System Prompt Formulation**: Instructs `gemini-3.5-flash` to output strict JSON conforming to the `LineageConfig` schema (`nodes` and `edges`).
-2. **Node Classification**: Categorizes entities into `'table'`, `'subquery'`, or `'source'`.
-3. **Markdown Sanitization**: Strip potential markdown ticks (` ```json ... ``` `) before calling `JSON.parse()`.
-4. **Error Handling**: Graceful fallback error responses if the model returns malformed JSON or if the API key is missing.
+1. **Model Selection**: Dynamically instantiates the target `LanguageModel` based on `process.env`.
+2. **System Prompt Formulation**: Instructs the model to output strict JSON conforming to the `LineageConfig` schema (`nodes`, `edges`, and `columnDependencies`).
+3. **Column Lineage Tracing**: AI analyzes column aliases, expressions (e.g. `price * qty AS total`), aggregations, subqueries, and JOINs to explicitly generate `columnDependencies` mapping target table columns to source table columns.
+4. **Node Classification**: Categorizes entities into `'table'`, `'subquery'`, or `'source'`.
+5. **Markdown Sanitization**: Strips potential markdown code ticks before calling `JSON.parse()`.
+6. **Error Handling**: Graceful fallback error responses if the model returns malformed JSON or if credentials are missing.
 
 ---
 
-## 5. Frontend React Flow Canvas Architecture
+## 5. Frontend React Flow Canvas Architecture & AI Column Highlighting
 
 The diagram canvas is implemented in `src/components/Diagram.tsx` using **React Flow** (`reactflow` v11) wrapped in a `ReactFlowProvider`.
+
+### AI-Driven Column Dependency Traversal (`src/lib/lineage.ts`)
+Instead of relying on naive string matching, column highlights utilize the AI-generated `columnDependencies` graph:
+- **Bidirectional Graph Resolution (`resolveHighlights`)**: Constructs a graph connecting target columns (`targetTable::targetColumn`) with source columns (`sourceTable::sourceColumn`).
+- **Graph Traversal (BFS)**: When a user hovers over a column in a table node OR a column token in the SQL editor, `resolveHighlights` traverses the dependency graph to find all transitively linked source and target columns.
+- **Cross-Component Highlighting**:
+  - Highlights linked columns across table nodes on the canvas.
+  - Highlights corresponding column tokens in the SQL editor text (`SqlEditor`).
+  - Animates connected edges (`#f59e0b`) linking source and target tables.
 
 ### Node State Protection During Drag & Drop
 To prevent nodes from disappearing when a user drags a table on the canvas:

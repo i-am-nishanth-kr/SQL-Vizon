@@ -6,6 +6,7 @@ import 'prismjs/themes/prism.css';
 import { Play, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
 import { LineageConfig, HoveredItem } from '../types';
+import { resolveHighlights } from '../lib/lineage';
 
 interface SqlEditorProps {
   sql: string;
@@ -16,6 +17,8 @@ interface SqlEditorProps {
   lineageConfig?: LineageConfig;
   hoveredItem?: HoveredItem | null;
   onHoverItem?: (item: HoveredItem | null) => void;
+  selectedItem?: HoveredItem | null;
+  onSelectItem?: (item: HoveredItem | null) => void;
 }
 
 function escapeRegExp(string: string) {
@@ -26,9 +29,11 @@ function highlightSqlWithTokens(
   code: string,
   knownTables: string[],
   knownColumns: string[],
-  hoveredItem: HoveredItem | null | undefined
+  hoveredItem: HoveredItem | null | undefined,
+  lineageConfig: LineageConfig | undefined
 ) {
   const prismHtml = highlight(code, languages.sql, 'sql');
+  const resolved = resolveHighlights(lineageConfig, hoveredItem);
 
   const tableSet = new Set(knownTables.map(t => t.toLowerCase()));
   const columnSet = new Set(knownColumns.map(c => c.toLowerCase()));
@@ -37,6 +42,10 @@ function highlightSqlWithTokens(
     if (hoveredItem.type === 'table') tableSet.add(hoveredItem.name.toLowerCase());
     if (hoveredItem.type === 'column') columnSet.add(hoveredItem.name.toLowerCase());
   }
+
+  // Ensure resolved column & table names are present in candidates
+  resolved.columnNames.forEach(c => columnSet.add(c));
+  resolved.tableNames.forEach(t => tableSet.add(t));
 
   if (tableSet.size === 0 && columnSet.size === 0) {
     return prismHtml;
@@ -59,7 +68,9 @@ function highlightSqlWithTokens(
         const cand = candidates.find(c => c.name.toLowerCase() === lower);
         const itemType = cand ? cand.type : 'column';
 
-        const isHovered = hName && hName === lower;
+        const isHovered = itemType === 'table'
+          ? resolved.tableNames.has(lower)
+          : (resolved.columnNames.has(lower) || (hName && hName === lower));
 
         const highlightClass = isHovered
           ? "bg-amber-300 text-amber-950 font-extrabold px-1 py-0.5 rounded-xs ring-2 ring-amber-400"
@@ -81,7 +92,9 @@ export default function SqlEditor({
   loading,
   lineageConfig,
   hoveredItem,
-  onHoverItem
+  onHoverItem,
+  selectedItem,
+  onSelectItem
 }: SqlEditorProps) {
   const [prompt, setPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -118,9 +131,9 @@ export default function SqlEditor({
 
     // Identifiers in SQL
     const identifiers = sql.match(/[a-zA-Z_][a-zA-Z0-9_]*/g) || [];
-    identifiers.forEach(w => {
+    identifiers.forEach((w: string) => {
       const lower = w.toLowerCase();
-      if (!sqlKeywords.has(lower) && !tables.some(t => t.toLowerCase() === lower)) {
+      if (!sqlKeywords.has(lower) && !tables.some((t: string) => t.toLowerCase() === lower)) {
         columns.push(w);
       }
     });
@@ -165,6 +178,21 @@ export default function SqlEditor({
     onHoverItem(null);
   }, [onHoverItem]);
 
+  const handleClick = useCallback((e: React.MouseEvent) => {
+    if (!onSelectItem) return;
+
+    const elements = document.elementsFromPoint(e.clientX, e.clientY);
+    const token = elements.find(el => el.classList && el.classList.contains('sql-hover-token'));
+
+    if (token) {
+      const name = token.getAttribute('data-token-name');
+      const type = token.getAttribute('data-token-type') as 'table' | 'column';
+      if (name && type) {
+        onSelectItem({ type, name });
+      }
+    }
+  }, [onSelectItem]);
+
   return (
     <div className="flex flex-col h-full bg-white border-r border-slate-200">
       <div className="px-4 py-2 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
@@ -186,12 +214,13 @@ export default function SqlEditor({
       <div 
         className="flex-1 overflow-auto p-4 font-mono text-sm leading-relaxed text-slate-700 bg-slate-50/20 relative"
         onMouseMove={handleMouseMove}
+        onClick={handleClick}
         onMouseLeave={() => onHoverItem && onHoverItem(null)}
       >
         <Editor
           value={sql}
           onValueChange={onChange}
-          highlight={code => highlightSqlWithTokens(code, knownTables, knownColumns, hoveredItem)}
+          highlight={code => highlightSqlWithTokens(code, knownTables, knownColumns, hoveredItem, lineageConfig)}
           padding={8}
           style={{
             fontFamily: '"Fira code", "Fira Mono", "Courier New", monospace',

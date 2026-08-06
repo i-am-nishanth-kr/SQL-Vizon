@@ -1,9 +1,3 @@
-/**
-	Project: SQL Vizion
-	Author: Nishanth
-	Version: 1.0.0
-	License: MIT
-**/
 import React, { useState, useEffect, useCallback } from 'react';
 import { Panel, Group, Separator } from 'react-resizable-panels';
 import Sidebar from './components/Sidebar';
@@ -21,7 +15,16 @@ function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-const INITIAL_SQL = '-- Customer Orders Lineage Query\nSELECT \n  u.id AS user_id,\n  u.name AS customer_name,\n  o.id AS order_id,\n  o.total_amount,\n  p.product_name\nFROM users u\nJOIN orders o ON u.id = o.user_id\nJOIN order_items oi ON o.id = oi.order_id\nJOIN products p ON oi.product_id = p.id;';
+const INITIAL_SQL = `-- Customer Orders & Analytics Lineage Query
+SELECT 
+  u.id AS user_id,
+  CONCAT(u.first_name, ' ', u.last_name) AS customer_name,
+  u.email AS customer_email,
+  COUNT(o.id) AS total_orders,
+  SUM(o.total_amount) AS total_spent
+FROM users u
+JOIN orders o ON u.id = o.user_id
+GROUP BY u.id, u.first_name, u.last_name, u.email;`;
 
 export default function App() {
   const [selectedQuery, setSelectedQuery] = useState<Query | null>(null);
@@ -33,7 +36,28 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(true);
   const [hoveredItem, setHoveredItem] = useState<HoveredItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<HoveredItem | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleSelectItem = useCallback((item: HoveredItem | null) => {
+    if (!item) {
+      setSelectedItem(null);
+      return;
+    }
+    setSelectedItem(prev => {
+      if (
+        prev && 
+        prev.type === item.type && 
+        prev.name.toLowerCase() === item.name.toLowerCase() &&
+        (prev.tableName || '').toLowerCase() === (item.tableName || '').toLowerCase()
+      ) {
+        return null; // Toggle off if clicking same item
+      }
+      return item;
+    });
+  }, []);
+
+  const activeItem = hoveredItem || selectedItem;
 
   const loadQueryData = async (queryId: string) => {
     try {
@@ -287,8 +311,10 @@ export default function App() {
                   onAnalyze={() => handleAnalyze()}
                   loading={loading}
                   lineageConfig={lineageConfig}
-                  hoveredItem={hoveredItem}
+                  hoveredItem={activeItem}
                   onHoverItem={setHoveredItem}
+                  selectedItem={selectedItem}
+                  onSelectItem={handleSelectItem}
                 />
               ) : (
                 <div className="h-full flex flex-col items-center justify-center bg-slate-50 text-slate-400 gap-3 p-6 text-center">
@@ -314,6 +340,8 @@ export default function App() {
                   onConfigChange={handleConfigChange}
                   hoveredItem={hoveredItem}
                   onHoverItem={setHoveredItem}
+                  selectedItem={selectedItem}
+                  onSelectItem={handleSelectItem}
                 />
               ) : (
                 <div className="h-full flex items-center justify-center bg-slate-50 text-slate-400 text-xs">

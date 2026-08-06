@@ -1,15 +1,11 @@
-/**
-	Project: SQL Vizion
-	Author: Nishanth
-	Version: 1.0.0
-	License: MIT
-**/
 import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
-import { GoogleGenAI } from '@google/genai';
+import { generateText } from 'ai';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { createOpenAI } from '@ai-sdk/openai';
 import { v4 as uuidv4 } from 'uuid';
 import dotenv from 'dotenv';
 
@@ -265,36 +261,56 @@ app.put('/api/versions/:versionId', (req, res) => {
   }
 });
 
-// --- AI Service ---
-const genAI = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
+// --- AI Service (Vercel AI SDK) ---
+
+/**
+ * Returns a configured Vercel AI SDK LanguageModel instance based on .env configuration.
+ * Supports Google Gemini, OpenAI, and Local LLMs (Ollama, Unsloth, LM Studio, LocalAI, etc.).
+ */
+function getLanguageModel() {
+  const provider = (process.env.AI_PROVIDER || 'google').toLowerCase().trim();
+
+  if (provider === 'openai') {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      throw new Error('OPENAI_API_KEY environment variable is required when AI_PROVIDER="openai"');
+    }
+    const modelName = process.env.AI_MODEL || 'gpt-4o-mini';
+    const openai = createOpenAI({ apiKey });
+    return openai(modelName);
+  }
+
+  if (provider === 'ollama' || provider === 'unsloth' || provider === 'local') {
+    const baseURL = process.env.LOCAL_AI_BASE_URL || process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434/v1';
+    const apiKey = process.env.LOCAL_AI_API_KEY || 'ollama';
+    const modelName = process.env.AI_MODEL || 'llama3';
+
+    const localAI = createOpenAI({
+      baseURL,
+      apiKey,
+    });
+    return localAI(modelName);
+  }
+
+  // Default provider: Google Gemini
+  const apiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY;
+  if (!apiKey) {
+    throw new Error('GEMINI_API_KEY environment variable is required when AI_PROVIDER="google"');
+  }
+  const modelName = process.env.AI_MODEL || 'gemini-2.5-flash';
+  const google = createGoogleGenerativeAI({ apiKey });
+  return google(modelName);
+}
+
+import { executeMultiAgentLineagePipeline } from './server/agents';
 
 app.post('/api/ai/parse-sql', async (req, res) => {
   const { sql, prompt: userPrompt } = req.body;
-  if (!process.env.GEMINI_API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY missing' });
 
   try {
-    const systemPrompt = `You are a SQL lineage expert. Parse the following SQL and output a JSON representation of its data lineage diagram.
-Format:
-{
-  "nodes": [{ "id": "table1", "type": "table", "data": { "label": "users", "columns": ["id", "name"] }, "position": { "x": 0, "y": 0 } }],
-  "edges": [{ "id": "e1", "source": "table1", "target": "table2", "label": "JOIN on id" }]
-}
-Types: "table", "subquery", "source".
-Positioning should be logical (left-to-right).
-Output ONLY the raw JSON. No markdown blocks.`;
-
-    const combinedPrompt = userPrompt 
-      ? `${systemPrompt}\n\nSQL: ${sql}\n\nUser Instruction: ${userPrompt}`
-      : `${systemPrompt}\n\nSQL: ${sql}`;
-
-    const response = await genAI.models.generateContent({
-      model: 'gemini-3.5-flash',
-      contents: combinedPrompt,
-    });
-    const text = response.text || '';
-    // Clean potential markdown code blocks
-    const cleanedJson = text.replace(/```json|```/g, '').trim();
-    res.json(JSON.parse(cleanedJson));
+    const model = getLanguageModel();
+    const config = await executeMultiAgentLineagePipeline(model, sql, userPrompt);
+    res.json(config);
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
@@ -302,15 +318,19 @@ Output ONLY the raw JSON. No markdown blocks.`;
 
 app.post('/api/ai/generate-sql', async (req, res) => {
   const { prompt } = req.body;
-  if (!process.env.GEMINI_API_KEY) return res.status(500).json({ error: 'GEMINI_API_KEY missing' });
 
   try {
-    const response = await genAI.models.generateContent({
-      model: 'gemini-3.5-flash',
-      contents: `Generate a SQL query based on this description: ${prompt}. Output ONLY the SQL query. No markdown blocks.`,
+    const model = getLanguageModel();
+
+    const { text } = await generateText({
+      model,
+      prompt: `Generate a SQL query based on this description: ${prompt}. Output ONLY the raw SQL query. Do NOT include markdown code blocks or backticks.`,
     });
-    const text = response.text || '';
-    res.json({ sql: text.replace(/```sql|```/g, '').trim() });
+
+    let cleanedSql = text.replace(/<think>[\s\S]*?<\/think>/gi, '').replace(/<think>[\s\S]*/gi, '');
+    cleanedSql = cleanedSql.replace(/```sql|```/g, '').replace(/```/g, '').trim();
+
+    res.json({ sql: cleanedSql });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
   }
